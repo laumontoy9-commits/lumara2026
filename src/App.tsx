@@ -641,6 +641,7 @@ function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const [activeMemberId, setActiveMemberId] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleProfilePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -683,13 +684,6 @@ function Dashboard() {
 
       if (newFiles.length > 0) {
         setSelectedFile(newFiles[0]);
-        // Trigger automatic download for the primary uploaded file
-        const link = document.createElement('a');
-        link.href = newFiles[0].url || '#';
-        link.download = newFiles[0].name;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
       }
 
       if (currentFolder) {
@@ -730,6 +724,82 @@ function Dashboard() {
       setIsUploading(false);
       setIsUploadDialogOpen(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }, 800);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    setTimeout(() => {
+      const newFiles: FileEntry[] = Array.from(files).map((file: File, index) => ({
+        id: `drop-${Date.now()}-${index}`,
+        name: file.name,
+        type: 'file',
+        extension: file.name.split('.').pop() || '',
+        size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+        uploadedBy: 'Laura Montoya',
+        uploadedAt: new Date().toISOString().split('T')[0],
+        status: 'pending',
+        category: 'Nuevos Tesoros',
+        url: URL.createObjectURL(file),
+        isUserUploaded: true
+      }));
+
+      if (newFiles.length > 0) {
+        setSelectedFile(newFiles[0]);
+      }
+
+      if (currentFolder) {
+        const updateFolder = (items: RootEntry[]): RootEntry[] => {
+          return items.map(item => {
+            if (item.id === currentFolder.id) {
+              return {
+                ...item,
+                children: [...(item as FolderEntry).children, ...newFiles]
+              };
+            } else if (item.type === 'folder') {
+              return {
+                ...item,
+                children: updateFolder(item.children)
+              };
+            }
+            return item;
+          });
+        };
+        setAllData(updateFolder(allData));
+        setCurrentPath(prev => {
+          const newPath = [...prev];
+          const last = newPath[newPath.length - 1];
+          newPath[newPath.length - 1] = {
+            ...last,
+            children: [...last.children, ...newFiles]
+          };
+          return newPath;
+        });
+      } else {
+        setAllData([...allData, ...newFiles]);
+      }
+
+      setIsUploading(false);
+      setIsUploadDialogOpen(false);
     }, 800);
   };
 
@@ -782,13 +852,6 @@ function Dashboard() {
 
         if (newFiles.length > 0) {
           setSelectedFile(newFiles[0]);
-          // Trigger automatic download for the primary pasted file
-          const link = document.createElement('a');
-          link.href = newFiles[0].url || '#';
-          link.download = newFiles[0].name;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
         }
 
         if (currentFolder) {
@@ -1011,9 +1074,13 @@ function Dashboard() {
                     Sube tus archivos de forma segura bajo la protección de Lumara.
                   </DialogDescription>
                 </DialogHeader>
-                <div 
-                  className="border-2 border-dashed border-rose-100 rounded-[2rem] p-12 text-center space-y-4 hover:border-rose-300 transition-all cursor-pointer bg-rose-50/30 group relative"
+                <div
+                  className={`border-2 border-dashed rounded-[2rem] p-12 text-center space-y-4 transition-all cursor-pointer group relative ${isDragging ? 'border-rose-400 bg-rose-100/50 scale-[1.02]' : 'border-rose-100 bg-rose-50/30 hover:border-rose-300'}`}
                   onClick={() => fileInputRef.current?.click()}
+                  onDragOver={handleDragOver}
+                  onDragEnter={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
                 >
                   {isUploading && (
                     <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] rounded-[1.8rem] flex flex-col items-center justify-center z-10 transition-all animate-in fade-in">
