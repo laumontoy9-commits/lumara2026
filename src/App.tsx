@@ -642,6 +642,8 @@ function Dashboard() {
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const [activeMemberId, setActiveMemberId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
 
   const handleProfilePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -801,6 +803,43 @@ function Dashboard() {
       setIsUploading(false);
       setIsUploadDialogOpen(false);
     }, 800);
+  };
+
+  const handleCreateFolder = () => {
+    const trimmed = newFolderName.trim();
+    if (!trimmed) return;
+
+    const newFolder: FolderEntry = {
+      id: `folder-${Date.now()}`,
+      name: trimmed,
+      type: 'folder',
+      children: []
+    };
+
+    if (currentFolder) {
+      const updateFolder = (items: RootEntry[]): RootEntry[] => {
+        return items.map(item => {
+          if (item.id === currentFolder.id) {
+            return { ...item, children: [...(item as FolderEntry).children, newFolder] };
+          } else if (item.type === 'folder') {
+            return { ...item, children: updateFolder(item.children) };
+          }
+          return item;
+        });
+      };
+      setAllData(updateFolder(allData));
+      setCurrentPath(prev => {
+        const newPath = [...prev];
+        const last = newPath[newPath.length - 1];
+        newPath[newPath.length - 1] = { ...last, children: [...last.children, newFolder] };
+        return newPath;
+      });
+    } else {
+      setAllData([...allData, newFolder]);
+    }
+
+    setNewFolderName('');
+    setIsNewFolderDialogOpen(false);
   };
 
   const handleGlobalPaste = (e: any) => {
@@ -1058,6 +1097,43 @@ function Dashboard() {
               <FileText className="w-4 h-4" />
               REFERENCIAS
             </Button>
+            <Dialog open={isNewFolderDialogOpen} onOpenChange={(open) => { setIsNewFolderDialogOpen(open); if (!open) setNewFolderName(''); }}>
+              <DialogTrigger
+                render={
+                  <Button variant="outline" className="h-11 rounded-full gap-2 text-[10px] font-bold uppercase tracking-widest border-rose-200 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-all px-6">
+                    <Folder className="w-4 h-4" />
+                    NUEVA CARPETA
+                  </Button>
+                }
+              />
+              <DialogContent className="sm:max-w-sm rounded-[2rem] border-rose-100">
+                <DialogHeader>
+                  <DialogTitle className="text-xl font-bold text-rose-500">Nueva Carpeta</DialogTitle>
+                  <DialogDescription className="text-rose-400">
+                    Crea una carpeta para organizar tu colección Lumara.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 pt-2">
+                  <Input
+                    placeholder="Nombre de la carpeta..."
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
+                    className="rounded-2xl border-rose-100 focus-visible:ring-rose-200 h-11"
+                    autoFocus
+                  />
+                  <Button
+                    onClick={handleCreateFolder}
+                    disabled={!newFolderName.trim()}
+                    className="w-full h-11 rounded-full bg-rose-500 hover:bg-rose-600 text-white font-bold uppercase text-[10px] tracking-widest shadow-lg shadow-rose-200/50"
+                  >
+                    <Folder className="w-4 h-4 mr-2" />
+                    Crear Carpeta
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
             <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
               <DialogTrigger
                 render={
