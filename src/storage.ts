@@ -1,122 +1,60 @@
-// Persistent storage: IndexedDB for file binaries, localStorage for structure & photos
+// Persistent storage: Supabase Storage for file binaries, Supabase DB for structure & photos
 
-const DB_NAME = 'lumara_vault';
-const DB_VERSION = 1;
-const FILES_STORE = 'files';
+import { supabase } from './supabase';
 
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = (e.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(FILES_STORE)) {
-        db.createObjectStore(FILES_STORE, { keyPath: 'id' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+const BUCKET = 'lumara-files';
+const VAULT_ROW_ID = 'default';
+
+// --- File uploads ---
+
+export async function saveFileToDB(id: string, file: File): Promise<string> {
+  const path = `files/${id}`;
+  const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
+    upsert: true,
+    contentType: file.type,
   });
+  if (error) throw error;
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  return data.publicUrl;
 }
 
-export async function saveFileToDB(id: string, file: File): Promise<void> {
-  const db = await openDB();
-  const arrayBuffer = await file.arrayBuffer();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILES_STORE, 'readwrite');
-    tx.objectStore(FILES_STORE).put({ id, arrayBuffer, type: file.type, name: file.name });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+export async function saveImageToDB(id: string, blob: Blob): Promise<string> {
+  const path = `photos/${id}`;
+  const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
+    upsert: true,
+    contentType: blob.type,
   });
-}
-
-export async function saveImageToDB(id: string, blob: Blob): Promise<void> {
-  const db = await openDB();
-  const arrayBuffer = await blob.arrayBuffer();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILES_STORE, 'readwrite');
-    tx.objectStore(FILES_STORE).put({ id, arrayBuffer, type: blob.type, name: id });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-// Returns a map of { id -> blob URL } for all stored files
-export async function loadAllBlobURLs(): Promise<Record<string, string>> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILES_STORE, 'readonly');
-    const req = tx.objectStore(FILES_STORE).getAll();
-    req.onsuccess = () => {
-      const result: Record<string, string> = {};
-      for (const record of req.result) {
-        const blob = new Blob([record.arrayBuffer], { type: record.type });
-        result[record.id] = URL.createObjectURL(blob);
-      }
-      resolve(result);
-    };
-    req.onerror = () => reject(req.error);
-  });
+  if (error) throw error;
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  return data.publicUrl;
 }
 
 export async function deleteFileFromDB(id: string): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILES_STORE, 'readwrite');
-    tx.objectStore(FILES_STORE).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+  await supabase.storage.from(BUCKET).remove([`files/${id}`, `photos/${id}`]);
+}
+
+// --- Vault state (structure + photos) ---
+
+export async function saveVaultState(structure: any[], photos: Record<string, string>): Promise<void> {
+  const { error } = await supabase.from('vault_state').upsert({
+    id: VAULT_ROW_ID,
+    structure,
+    photos,
+    updated_at: new Date().toISOString(),
   });
+  if (error) console.error('saveVaultState error:', error);
 }
 
-// --- localStorage: vault structure (folders + file metadata without blob URLs) ---
+export async function loadVaultState(): Promise<{ structure: any[] | null; photos: Record<string, string> }> {
+  const { data, error } = await supabase
+    .from('vault_state')
+    .select('structure, photos')
+    .eq('id', VAULT_ROW_ID)
+    .single();
 
-const STRUCTURE_KEY = 'lumara_structure';
-const PHOTOS_KEY = 'lumara_photos';
-
-function stripBlobUrls(items: any[]): any[] {
-  return items.map(item => {
-    if (item.type === 'folder') {
-      return { ...item, children: stripBlobUrls(item.children) };
-    }
-    // Keep data: URLs (signatures/base64 images), remove blob: URLs (temporary)
-    const url = item.url?.startsWith('blob:') ? undefined : item.url;
-    return { ...item, url };
-  });
-}
-
-export function saveStructure(data: any[]): void {
-  try {
-    localStorage.setItem(STRUCTURE_KEY, JSON.stringify(stripBlobUrls(data)));
-  } catch {
-    // localStorage might be full; fail silently
-  }
-}
-
-export function loadStructure(): any[] | null {
-  try {
-    const saved = localStorage.getItem(STRUCTURE_KEY);
-    return saved ? JSON.parse(saved) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function savePhotos(photos: Record<string, string>): void {
-  try {
-    // Only save blob: URLs that have been converted — skip temporary blob: URLs
-    const clean: Record<string, string> = {};
-    for (const [k, v] of Object.entries(photos)) {
-      if (!v.startsWith('blob:')) clean[k] = v;
-    }
-    localStorage.setItem(PHOTOS_KEY, JSON.stringify(clean));
-  } catch {}
-}
-
-export function loadPhotos(): Record<string, string> {
-  try {
-    const saved = localStorage.getItem(PHOTOS_KEY);
-    return saved ? JSON.parse(saved) : {};
-  } catch {
-    return {};
-  }
+  if (error || !data) return { structure: null, photos: {} };
+  return {
+    structure: data.structure ?? null,
+    photos: data.photos ?? {},
+  };
 }
