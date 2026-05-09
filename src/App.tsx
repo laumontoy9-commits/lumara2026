@@ -72,6 +72,7 @@ import {
 } from '@/components/ui/dialog';
 import { mockData } from './mockData';
 import { FileEntry, FolderEntry, RootEntry, DocumentStatus } from './types';
+import { saveFileToDB, saveImageToDB, loadAllBlobURLs, saveStructure, loadStructure, savePhotos, loadPhotos } from './storage';
 
 const StatusBadge = ({ status }: { status: DocumentStatus }) => {
   switch (status) {
@@ -602,14 +603,14 @@ export default function App() {
 
 function Dashboard() {
   const navigate = useNavigate();
-  const [allData, setAllData] = useState<RootEntry[]>(mockData);
+  const [allData, setAllData] = useState<RootEntry[]>(loadStructure() ?? mockData);
   const [currentPath, setCurrentPath] = useState<FolderEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [profilePhotos, setProfilePhotos] = useState<Record<string, string>>({});
+  const [profilePhotos, setProfilePhotos] = useState<Record<string, string>>(loadPhotos());
   const [hoveredMemberId, setHoveredMemberId] = useState<string | null>(null);
   const [customSignatures, setCustomSignatures] = useState<Record<string, string>>({
     laura: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='100'%3E%3Ctext x='50%25' y='60%25' font-family='Brush Script MT, cursive' font-size='40' fill='%230f172a' text-anchor='middle' transform='rotate(-2, 150, 50)'%3ELaura Pérez M.%3C/text%3E%3C/svg%3E",
@@ -617,6 +618,37 @@ function Dashboard() {
     diana: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='100'%3E%3Ctext x='50%25' y='60%25' font-family='Snell Roundhand, cursive' font-size='38' fill='%230f172a' text-anchor='middle' transform='rotate(-1, 150, 50)'%3EDiana Calle Z.%3C/text%3E%3C/svg%3E",
     manuela: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='100'%3E%3Ctext x='50%25' y='60%25' font-family='Lucida Handwriting, cursive' font-size='32' fill='%230f172a' text-anchor='middle' transform='rotate(2, 150, 50)'%3EManuela Londoño D.%3C/text%3E%3C/svg%3E"
   });
+
+  // On mount: restore blob URLs from IndexedDB for all user-uploaded files and photos
+  React.useEffect(() => {
+    loadAllBlobURLs().then(blobMap => {
+      if (Object.keys(blobMap).length === 0) return;
+
+      const attachUrls = (items: RootEntry[]): RootEntry[] =>
+        items.map(item => {
+          if (item.type === 'folder') {
+            return { ...item, children: attachUrls(item.children) };
+          }
+          if ((item as FileEntry).isUserUploaded && blobMap[item.id]) {
+            return { ...item, url: blobMap[item.id] };
+          }
+          return item;
+        });
+
+      setAllData(prev => attachUrls(prev));
+
+      // Restore profile photos that were saved as images
+      setProfilePhotos(prev => {
+        const restored = { ...prev };
+        for (const [id, url] of Object.entries(blobMap)) {
+          if (id.startsWith('photo_')) {
+            restored[id.replace('photo_', '')] = url;
+          }
+        }
+        return restored;
+      });
+    });
+  }, []);
 
   const handlePaste = (e: React.ClipboardEvent, id: string) => {
     e.preventDefault();
@@ -649,7 +681,9 @@ function Dashboard() {
     const file = event.target.files?.[0];
     if (file && activeMemberId) {
       const url = URL.createObjectURL(file);
-      setProfilePhotos(prev => ({ ...prev, [activeMemberId]: url }));
+      const updated = { ...profilePhotos, [activeMemberId]: url };
+      setProfilePhotos(updated);
+      saveImageToDB(`photo_${activeMemberId}`, file);
       setActiveMemberId(null);
     }
   };
@@ -668,9 +702,16 @@ function Dashboard() {
 
     setIsUploading(true);
 
-    // Simulate upload delay
+    const fileArray = Array.from(files);
+
+    // Save binaries to IndexedDB first (async, non-blocking)
+    fileArray.forEach((file, index) => {
+      const id = `upl-${Date.now()}-${index}`;
+      saveFileToDB(id, file);
+    });
+
     setTimeout(() => {
-      const newFiles: FileEntry[] = Array.from(files).map((file: File, index) => ({
+      const newFiles: FileEntry[] = fileArray.map((file: File, index) => ({
         id: `upl-${Date.now()}-${index}`,
         name: file.name,
         type: 'file',
@@ -688,41 +729,32 @@ function Dashboard() {
         setSelectedFile(newFiles[0]);
       }
 
+      let updatedData: RootEntry[];
       if (currentFolder) {
-        // Add to current folder
         const updateFolder = (items: RootEntry[]): RootEntry[] => {
           return items.map(item => {
             if (item.id === currentFolder.id) {
-              return {
-                ...item,
-                children: [...(item as FolderEntry).children, ...newFiles]
-              };
+              return { ...item, children: [...(item as FolderEntry).children, ...newFiles] };
             } else if (item.type === 'folder') {
-              return {
-                ...item,
-                children: updateFolder(item.children)
-              };
+              return { ...item, children: updateFolder(item.children) };
             }
             return item;
           });
         };
-        setAllData(updateFolder(allData));
-        
-        // Also update currentPath to reflect changes immediately
+        updatedData = updateFolder(allData);
+        setAllData(updatedData);
         setCurrentPath(prev => {
           const newPath = [...prev];
           const last = newPath[newPath.length - 1];
-          newPath[newPath.length - 1] = {
-            ...last,
-            children: [...last.children, ...newFiles]
-          };
+          newPath[newPath.length - 1] = { ...last, children: [...last.children, ...newFiles] };
           return newPath;
         });
       } else {
-        // Add to root
-        setAllData([...allData, ...newFiles]);
+        updatedData = [...allData, ...newFiles];
+        setAllData(updatedData);
       }
 
+      saveStructure(updatedData);
       setIsUploading(false);
       setIsUploadDialogOpen(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -750,8 +782,11 @@ function Dashboard() {
     if (!files || files.length === 0) return;
 
     setIsUploading(true);
+    const fileArray = Array.from(files);
+    fileArray.forEach((file, index) => saveFileToDB(`drop-${Date.now()}-${index}`, file));
+
     setTimeout(() => {
-      const newFiles: FileEntry[] = Array.from(files).map((file: File, index) => ({
+      const newFiles: FileEntry[] = fileArray.map((file: File, index) => ({
         id: `drop-${Date.now()}-${index}`,
         name: file.name,
         type: 'file',
@@ -765,41 +800,30 @@ function Dashboard() {
         isUserUploaded: true
       }));
 
-      if (newFiles.length > 0) {
-        setSelectedFile(newFiles[0]);
-      }
+      if (newFiles.length > 0) setSelectedFile(newFiles[0]);
 
+      let updatedData: RootEntry[];
       if (currentFolder) {
-        const updateFolder = (items: RootEntry[]): RootEntry[] => {
-          return items.map(item => {
-            if (item.id === currentFolder.id) {
-              return {
-                ...item,
-                children: [...(item as FolderEntry).children, ...newFiles]
-              };
-            } else if (item.type === 'folder') {
-              return {
-                ...item,
-                children: updateFolder(item.children)
-              };
-            }
+        const updateFolder = (items: RootEntry[]): RootEntry[] =>
+          items.map(item => {
+            if (item.id === currentFolder.id) return { ...item, children: [...(item as FolderEntry).children, ...newFiles] };
+            if (item.type === 'folder') return { ...item, children: updateFolder(item.children) };
             return item;
           });
-        };
-        setAllData(updateFolder(allData));
+        updatedData = updateFolder(allData);
+        setAllData(updatedData);
         setCurrentPath(prev => {
           const newPath = [...prev];
           const last = newPath[newPath.length - 1];
-          newPath[newPath.length - 1] = {
-            ...last,
-            children: [...last.children, ...newFiles]
-          };
+          newPath[newPath.length - 1] = { ...last, children: [...last.children, ...newFiles] };
           return newPath;
         });
       } else {
-        setAllData([...allData, ...newFiles]);
+        updatedData = [...allData, ...newFiles];
+        setAllData(updatedData);
       }
 
+      saveStructure(updatedData);
       setIsUploading(false);
       setIsUploadDialogOpen(false);
     }, 800);
@@ -816,18 +840,16 @@ function Dashboard() {
       children: []
     };
 
+    let updatedData: RootEntry[];
     if (currentFolder) {
-      const updateFolder = (items: RootEntry[]): RootEntry[] => {
-        return items.map(item => {
-          if (item.id === currentFolder.id) {
-            return { ...item, children: [...(item as FolderEntry).children, newFolder] };
-          } else if (item.type === 'folder') {
-            return { ...item, children: updateFolder(item.children) };
-          }
+      const updateFolder = (items: RootEntry[]): RootEntry[] =>
+        items.map(item => {
+          if (item.id === currentFolder.id) return { ...item, children: [...(item as FolderEntry).children, newFolder] };
+          if (item.type === 'folder') return { ...item, children: updateFolder(item.children) };
           return item;
         });
-      };
-      setAllData(updateFolder(allData));
+      updatedData = updateFolder(allData);
+      setAllData(updatedData);
       setCurrentPath(prev => {
         const newPath = [...prev];
         const last = newPath[newPath.length - 1];
@@ -835,9 +857,11 @@ function Dashboard() {
         return newPath;
       });
     } else {
-      setAllData([...allData, newFolder]);
+      updatedData = [...allData, newFolder];
+      setAllData(updatedData);
     }
 
+    saveStructure(updatedData);
     setNewFolderName('');
     setIsNewFolderDialogOpen(false);
   };
@@ -852,8 +876,12 @@ function Dashboard() {
         const file = items[i].getAsFile();
         if (file && file.type.startsWith('image/')) {
           const url = URL.createObjectURL(file);
-          setProfilePhotos(prev => ({ ...prev, [hoveredMemberId]: url }));
-          return; // Stop after first image
+          setProfilePhotos(prev => {
+            const updated = { ...prev, [hoveredMemberId]: url };
+            return updated;
+          });
+          saveImageToDB(`photo_${hoveredMemberId}`, file);
+          return;
         }
       }
     }
@@ -910,9 +938,13 @@ function Dashboard() {
               return item;
             });
           };
-          setAllData(updateFolder(allData));
+          const updated = updateFolder(allData);
+          setAllData(updated);
+          saveStructure(updated);
         } else {
-          setAllData([...allData, ...newFiles]);
+          const updated = [...allData, ...newFiles];
+          setAllData(updated);
+          saveStructure(updated);
         }
         setIsUploading(false);
         setIsUploadDialogOpen(false);
