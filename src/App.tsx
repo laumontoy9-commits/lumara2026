@@ -72,7 +72,7 @@ import {
 } from '@/components/ui/dialog';
 import { mockData } from './mockData';
 import { FileEntry, FolderEntry, RootEntry, DocumentStatus } from './types';
-import { saveFileToDB, saveImageToDB, loadAllBlobURLs, saveStructure, loadStructure, savePhotos, loadPhotos } from './storage';
+import { saveFileToDB, saveImageToDB, saveVaultState, loadVaultState } from './storage';
 
 const StatusBadge = ({ status }: { status: DocumentStatus }) => {
   switch (status) {
@@ -603,14 +603,15 @@ export default function App() {
 
 function Dashboard() {
   const navigate = useNavigate();
-  const [allData, setAllData] = useState<RootEntry[]>(loadStructure() ?? mockData);
+  const isLoadedRef = useRef(false);
+  const [allData, setAllData] = useState<RootEntry[]>(mockData);
   const [currentPath, setCurrentPath] = useState<FolderEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedFile, setSelectedFile] = useState<FileEntry | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [profilePhotos, setProfilePhotos] = useState<Record<string, string>>(loadPhotos());
+  const [profilePhotos, setProfilePhotos] = useState<Record<string, string>>({});
   const [hoveredMemberId, setHoveredMemberId] = useState<string | null>(null);
   const [customSignatures, setCustomSignatures] = useState<Record<string, string>>({
     laura: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='100'%3E%3Ctext x='50%25' y='60%25' font-family='Brush Script MT, cursive' font-size='40' fill='%230f172a' text-anchor='middle' transform='rotate(-2, 150, 50)'%3ELaura Pérez M.%3C/text%3E%3C/svg%3E",
@@ -619,34 +620,12 @@ function Dashboard() {
     manuela: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='100'%3E%3Ctext x='50%25' y='60%25' font-family='Lucida Handwriting, cursive' font-size='32' fill='%230f172a' text-anchor='middle' transform='rotate(2, 150, 50)'%3EManuela Londoño D.%3C/text%3E%3C/svg%3E"
   });
 
-  // On mount: restore blob URLs from IndexedDB for all user-uploaded files and photos
+  // On mount: load vault state from Supabase
   React.useEffect(() => {
-    loadAllBlobURLs().then(blobMap => {
-      if (Object.keys(blobMap).length === 0) return;
-
-      const attachUrls = (items: RootEntry[]): RootEntry[] =>
-        items.map(item => {
-          if (item.type === 'folder') {
-            return { ...item, children: attachUrls(item.children) };
-          }
-          if ((item as FileEntry).isUserUploaded && blobMap[item.id]) {
-            return { ...item, url: blobMap[item.id] };
-          }
-          return item;
-        });
-
-      setAllData(prev => attachUrls(prev));
-
-      // Restore profile photos that were saved as images
-      setProfilePhotos(prev => {
-        const restored = { ...prev };
-        for (const [id, url] of Object.entries(blobMap)) {
-          if (id.startsWith('photo_')) {
-            restored[id.replace('photo_', '')] = url;
-          }
-        }
-        return restored;
-      });
+    loadVaultState().then(({ structure, photos }) => {
+      if (structure && structure.length > 0) setAllData(structure);
+      if (photos && Object.keys(photos).length > 0) setProfilePhotos(photos);
+      isLoadedRef.current = true;
     });
   }, []);
 
@@ -677,14 +656,25 @@ function Dashboard() {
   const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
-  const handleProfilePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProfilePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file && activeMemberId) {
-      const url = URL.createObjectURL(file);
-      const updated = { ...profilePhotos, [activeMemberId]: url };
-      setProfilePhotos(updated);
-      saveImageToDB(`photo_${activeMemberId}`, file);
+      const memberId = activeMemberId;
       setActiveMemberId(null);
+      const tempUrl = URL.createObjectURL(file);
+      const tempUpdated = { ...profilePhotos, [memberId]: tempUrl };
+      setProfilePhotos(tempUpdated);
+      try {
+        const publicUrl = await saveImageToDB(`photo_${memberId}`, file);
+        setProfilePhotos(prev => {
+          const final = { ...prev, [memberId]: publicUrl };
+          saveVaultState(allData, final);
+          return final;
+        });
+      } catch (err) {
+        console.error('Error uploading photo:', err);
+        saveVaultState(allData, tempUpdated);
+      }
     }
   };
 
@@ -696,108 +686,31 @@ function Dashboard() {
   const currentFolder = currentPath.length > 0 ? currentPath[currentPath.length - 1] : null;
   const displayItems = currentFolder ? currentFolder.children : allData;
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
     setIsUploading(true);
+    const fileArray = Array.from<File>(files);
+    const ts = Date.now();
 
-    const fileArray = Array.from(files);
-
-    // Save binaries to IndexedDB first (async, non-blocking)
-    fileArray.forEach((file, index) => {
-      const id = `upl-${Date.now()}-${index}`;
-      saveFileToDB(id, file);
-    });
-
-    setTimeout(() => {
-      const newFiles: FileEntry[] = fileArray.map((file: File, index) => ({
-        id: `upl-${Date.now()}-${index}`,
-        name: file.name,
-        type: 'file',
-        extension: file.name.split('.').pop() || '',
-        size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-        uploadedBy: 'Laura Montoya',
-        uploadedAt: new Date().toISOString().split('T')[0],
-        status: 'pending',
-        category: 'Nuevos Tesoros',
-        url: URL.createObjectURL(file),
-        isUserUploaded: true
-      }));
-
-      if (newFiles.length > 0) {
-        setSelectedFile(newFiles[0]);
-      }
-
-      let updatedData: RootEntry[];
-      if (currentFolder) {
-        const updateFolder = (items: RootEntry[]): RootEntry[] => {
-          return items.map(item => {
-            if (item.id === currentFolder.id) {
-              return { ...item, children: [...(item as FolderEntry).children, ...newFiles] };
-            } else if (item.type === 'folder') {
-              return { ...item, children: updateFolder(item.children) };
-            }
-            return item;
-          });
+    try {
+      const newFiles: FileEntry[] = await Promise.all(fileArray.map(async (file, index) => {
+        const id = `upl-${ts}-${index}`;
+        const publicUrl = await saveFileToDB(id, file);
+        return {
+          id,
+          name: file.name,
+          type: 'file' as const,
+          extension: file.name.split('.').pop() || '',
+          size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+          uploadedBy: 'Laura Montoya',
+          uploadedAt: new Date().toISOString().split('T')[0],
+          status: 'pending' as DocumentStatus,
+          category: 'Nuevos Tesoros',
+          url: publicUrl,
+          isUserUploaded: true
         };
-        updatedData = updateFolder(allData);
-        setAllData(updatedData);
-        setCurrentPath(prev => {
-          const newPath = [...prev];
-          const last = newPath[newPath.length - 1];
-          newPath[newPath.length - 1] = { ...last, children: [...last.children, ...newFiles] };
-          return newPath;
-        });
-      } else {
-        updatedData = [...allData, ...newFiles];
-        setAllData(updatedData);
-      }
-
-      saveStructure(updatedData);
-      setIsUploading(false);
-      setIsUploadDialogOpen(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }, 800);
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
-
-    setIsUploading(true);
-    const fileArray = Array.from(files);
-    fileArray.forEach((file, index) => saveFileToDB(`drop-${Date.now()}-${index}`, file));
-
-    setTimeout(() => {
-      const newFiles: FileEntry[] = fileArray.map((file: File, index) => ({
-        id: `drop-${Date.now()}-${index}`,
-        name: file.name,
-        type: 'file',
-        extension: file.name.split('.').pop() || '',
-        size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-        uploadedBy: 'Laura Montoya',
-        uploadedAt: new Date().toISOString().split('T')[0],
-        status: 'pending',
-        category: 'Nuevos Tesoros',
-        url: URL.createObjectURL(file),
-        isUserUploaded: true
       }));
 
       if (newFiles.length > 0) setSelectedFile(newFiles[0]);
@@ -823,10 +736,89 @@ function Dashboard() {
         setAllData(updatedData);
       }
 
-      saveStructure(updatedData);
+      saveVaultState(updatedData, profilePhotos);
+    } catch (err) {
+      console.error('Upload error:', err);
+    } finally {
       setIsUploading(false);
       setIsUploadDialogOpen(false);
-    }, 800);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    const fileArray = Array.from<File>(files);
+    const ts = Date.now();
+
+    try {
+      const newFiles: FileEntry[] = await Promise.all(fileArray.map(async (file, index) => {
+        const id = `drop-${ts}-${index}`;
+        const publicUrl = await saveFileToDB(id, file);
+        return {
+          id,
+          name: file.name,
+          type: 'file' as const,
+          extension: file.name.split('.').pop() || '',
+          size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+          uploadedBy: 'Laura Montoya',
+          uploadedAt: new Date().toISOString().split('T')[0],
+          status: 'pending' as DocumentStatus,
+          category: 'Nuevos Tesoros',
+          url: publicUrl,
+          isUserUploaded: true
+        };
+      }));
+
+      if (newFiles.length > 0) setSelectedFile(newFiles[0]);
+
+      let updatedData: RootEntry[];
+      if (currentFolder) {
+        const updateFolder = (items: RootEntry[]): RootEntry[] =>
+          items.map(item => {
+            if (item.id === currentFolder.id) return { ...item, children: [...(item as FolderEntry).children, ...newFiles] };
+            if (item.type === 'folder') return { ...item, children: updateFolder(item.children) };
+            return item;
+          });
+        updatedData = updateFolder(allData);
+        setAllData(updatedData);
+        setCurrentPath(prev => {
+          const newPath = [...prev];
+          const last = newPath[newPath.length - 1];
+          newPath[newPath.length - 1] = { ...last, children: [...last.children, ...newFiles] };
+          return newPath;
+        });
+      } else {
+        updatedData = [...allData, ...newFiles];
+        setAllData(updatedData);
+      }
+
+      saveVaultState(updatedData, profilePhotos);
+    } catch (err) {
+      console.error('Drop upload error:', err);
+    } finally {
+      setIsUploading(false);
+      setIsUploadDialogOpen(false);
+    }
   };
 
   const handleCreateFolder = () => {
@@ -861,26 +853,33 @@ function Dashboard() {
       setAllData(updatedData);
     }
 
-    saveStructure(updatedData);
+    saveVaultState(updatedData, profilePhotos);
     setNewFolderName('');
     setIsNewFolderDialogOpen(false);
   };
 
-  const handleGlobalPaste = (e: any) => {
+  const handleGlobalPaste = async (e: any) => {
     // Handle paste for profile images/charts if one is being hovered
     if (hoveredMemberId) {
       const items = e.clipboardData?.items;
       if (!items) return;
-      
+
       for (let i = 0; i < items.length; i++) {
         const file = items[i].getAsFile();
         if (file && file.type.startsWith('image/')) {
-          const url = URL.createObjectURL(file);
-          setProfilePhotos(prev => {
-            const updated = { ...prev, [hoveredMemberId]: url };
-            return updated;
-          });
-          saveImageToDB(`photo_${hoveredMemberId}`, file);
+          const memberId = hoveredMemberId;
+          const tempUrl = URL.createObjectURL(file);
+          setProfilePhotos(prev => ({ ...prev, [memberId]: tempUrl }));
+          try {
+            const publicUrl = await saveImageToDB(`photo_${memberId}`, file);
+            setProfilePhotos(prev => {
+              const final = { ...prev, [memberId]: publicUrl };
+              saveVaultState(allData, final);
+              return final;
+            });
+          } catch (err) {
+            console.error('Error uploading pasted photo:', err);
+          }
           return;
         }
       }
@@ -888,67 +887,61 @@ function Dashboard() {
 
     // Only handle generic paste if the upload dialog is open
     if (!isUploadDialogOpen) return;
-    
+
     const items = e.clipboardData?.items;
     if (!items) return;
-    
+
     const pastedFiles: File[] = [];
     for (let i = 0; i < items.length; i++) {
       const file = items[i].getAsFile();
-      if (file) {
-        pastedFiles.push(file);
-      }
+      if (file) pastedFiles.push(file);
     }
-    
+
     if (pastedFiles.length > 0) {
       setIsUploading(true);
-      setTimeout(() => {
-        const newFiles: FileEntry[] = pastedFiles.map((file, index) => ({
-          id: `paste-${Date.now()}-${index}`,
-          name: file.name || `Pasted Image ${index + 1}.png`,
-          type: 'file',
-          extension: file.name?.split('.').pop() || 'png',
-          size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-          uploadedBy: 'Laura Montoya',
-          uploadedAt: new Date().toISOString().split('T')[0],
-          status: 'pending',
-          category: 'Nuevos Tesoros',
-          url: URL.createObjectURL(file),
-          isUserUploaded: true
+      const ts = Date.now();
+      try {
+        const newFiles: FileEntry[] = await Promise.all(pastedFiles.map(async (file, index) => {
+          const id = `paste-${ts}-${index}`;
+          const publicUrl = await saveFileToDB(id, file);
+          return {
+            id,
+            name: file.name || `Imagen pegada ${index + 1}.png`,
+            type: 'file' as const,
+            extension: file.name?.split('.').pop() || 'png',
+            size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            uploadedBy: 'Laura Montoya',
+            uploadedAt: new Date().toISOString().split('T')[0],
+            status: 'pending' as DocumentStatus,
+            category: 'Nuevos Tesoros',
+            url: publicUrl,
+            isUserUploaded: true
+          };
         }));
 
-        if (newFiles.length > 0) {
-          setSelectedFile(newFiles[0]);
-        }
+        if (newFiles.length > 0) setSelectedFile(newFiles[0]);
 
+        let updatedData: RootEntry[];
         if (currentFolder) {
-          const updateFolder = (items: RootEntry[]): RootEntry[] => {
-            return items.map(item => {
-              if (item.id === currentFolder.id) {
-                return {
-                  ...item,
-                  children: [...(item as FolderEntry).children, ...newFiles]
-                };
-              } else if (item.type === 'folder') {
-                return {
-                  ...item,
-                  children: updateFolder(item.children)
-                };
-              }
+          const updateFolder = (items: RootEntry[]): RootEntry[] =>
+            items.map(item => {
+              if (item.id === currentFolder.id) return { ...item, children: [...(item as FolderEntry).children, ...newFiles] };
+              if (item.type === 'folder') return { ...item, children: updateFolder(item.children) };
               return item;
             });
-          };
-          const updated = updateFolder(allData);
-          setAllData(updated);
-          saveStructure(updated);
+          updatedData = updateFolder(allData);
+          setAllData(updatedData);
         } else {
-          const updated = [...allData, ...newFiles];
-          setAllData(updated);
-          saveStructure(updated);
+          updatedData = [...allData, ...newFiles];
+          setAllData(updatedData);
         }
+        saveVaultState(updatedData, profilePhotos);
+      } catch (err) {
+        console.error('Paste upload error:', err);
+      } finally {
         setIsUploading(false);
         setIsUploadDialogOpen(false);
-      }, 800);
+      }
     }
   };
 
