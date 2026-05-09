@@ -1343,30 +1343,41 @@ function Dashboard() {
                 className="space-y-10"
               >
                 <div className="space-y-4">
-                  <div className="flex items-center gap-3 text-[10px] text-rose-300 font-bold uppercase tracking-[0.2em] bg-white/40 backdrop-blur-sm w-fit px-8 py-3 rounded-full shadow-sm shadow-rose-100 border border-white/50">
-                    <button 
-                      onClick={() => navigateToBreadcrumb(-1)}
-                      className="hover:text-rose-500 transition-colors"
-                    >
-                      Lumara Vault
-                    </button>
-                    {currentPath.length === 0 && (
-                      <>
-                        <ChevronRight className="w-3 h-3 text-rose-200" />
-                        <span className="text-rose-500 bg-rose-50/50 px-3 py-1 rounded-full">COLECCIÓN DUO LIPS</span>
-                      </>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-3 text-[10px] text-rose-300 font-bold uppercase tracking-[0.2em] bg-white/40 backdrop-blur-sm w-fit px-8 py-3 rounded-full shadow-sm shadow-rose-100 border border-white/50">
+                      <button
+                        onClick={() => navigateToBreadcrumb(-1)}
+                        className="hover:text-rose-500 transition-colors"
+                      >
+                        Lumara Vault
+                      </button>
+                      {currentPath.length === 0 && (
+                        <>
+                          <ChevronRight className="w-3 h-3 text-rose-200" />
+                          <span className="text-rose-500 bg-rose-50/50 px-3 py-1 rounded-full">COLECCIÓN DUO LIPS</span>
+                        </>
+                      )}
+                      {currentPath.map((folder, i) => (
+                        <React.Fragment key={folder.id}>
+                          <ChevronRight className="w-3 h-3 text-rose-100" />
+                          <button
+                            onClick={() => navigateToBreadcrumb(i)}
+                            className={`hover:text-primary transition-colors ${i === currentPath.length - 1 ? 'text-rose-600' : ''}`}
+                          >
+                            {folder.name}
+                          </button>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                    {currentFolder && (
+                      <button
+                        onClick={() => setIsUploadDialogOpen(true)}
+                        className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-white bg-rose-500 hover:bg-rose-600 px-6 py-3 rounded-full shadow-lg shadow-rose-200/50 transition-all"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Subir a esta carpeta
+                      </button>
                     )}
-                    {currentPath.map((folder, i) => (
-                      <React.Fragment key={folder.id}>
-                        <ChevronRight className="w-3 h-3 text-rose-100" />
-                        <button 
-                          onClick={() => navigateToBreadcrumb(i)}
-                          className={`hover:text-primary transition-colors ${i === currentPath.length - 1 ? 'text-rose-600' : ''}`}
-                        >
-                          {folder.name}
-                        </button>
-                      </React.Fragment>
-                    ))}
                   </div>
                 </div>
 
@@ -1374,12 +1385,10 @@ function Dashboard() {
                 {!searchTerm && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
                     {(currentFolder ? currentFolder.children.filter(i => i.type === 'folder') : allData.filter(i => i.type === 'folder')).map((folder) => (
-                      <Card 
-                        key={folder.id} 
+                      <Card
+                        key={folder.id}
                         className="bg-white/80 backdrop-blur-lg border-0 hover:-translate-y-2 transition-all duration-300 cursor-pointer group shadow-2xl shadow-rose-200/5 rounded-[2.5rem]"
-                        onClick={() => {
-                          navigateToFolder(folder as FolderEntry);
-                        }}
+                        onClick={() => navigateToFolder(folder as FolderEntry)}
                       >
                         <CardContent className="p-8">
                           <div className="mb-6">
@@ -1392,6 +1401,17 @@ function Dashboard() {
                             <p className="text-[10px] text-rose-300 font-bold uppercase tracking-widest whitespace-nowrap">
                               {(folder as FolderEntry).children.length} Tesoros
                             </p>
+                            <button
+                              className="opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 bg-rose-500 hover:bg-rose-600 rounded-full flex items-center justify-center shadow-md"
+                              title="Subir archivo a esta carpeta"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigateToFolder(folder as FolderEntry);
+                                setTimeout(() => setIsUploadDialogOpen(true), 50);
+                              }}
+                            >
+                              <Upload className="w-3.5 h-3.5 text-white" />
+                            </button>
                           </div>
                         </CardContent>
                       </Card>
@@ -1463,27 +1483,30 @@ function Dashboard() {
                           </TableCell>
                         </TableRow>
                       ))}
-                      {filteredItems.filter(i => i.type === 'file').length === 1 && (
-                        <TableRow 
-                          className="border-b border-rose-50 last:border-0 group cursor-pointer hover:bg-rose-50/30 transition-all h-24"
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <TableCell className="px-10" colSpan={5}>
-                            <div className="flex items-center gap-5 text-rose-400 group-hover:text-rose-500 transition-colors">
-                              <div className="w-12 h-12 border-2 border-dashed border-rose-200 rounded-full flex items-center justify-center group-hover:border-rose-400 transition-colors bg-white/50">
-                                <Plus className="w-6 h-6" />
+                      {filteredItems.filter(i => i.type === 'file').length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="h-48 text-center cursor-pointer group" onClick={() => setIsUploadDialogOpen(true)}>
+                            <div className="flex flex-col items-center justify-center gap-4">
+                              <div className="w-16 h-16 border-2 border-dashed border-rose-200 rounded-full flex items-center justify-center group-hover:border-rose-400 group-hover:bg-rose-50/50 transition-all">
+                                <Upload className="w-7 h-7 text-rose-300 group-hover:text-rose-500 transition-colors" />
                               </div>
-                              <span className="text-sm font-black italic tracking-tight">Haz clic aquí para subir tu próximo Excel...</span>
+                              <p className="text-sm font-bold italic text-rose-300 group-hover:text-rose-500 transition-colors">
+                                Esta carpeta está vacía — haz clic para subir archivos
+                              </p>
                             </div>
                           </TableCell>
                         </TableRow>
-                      )}
-                      {filteredItems.filter(i => i.type === 'file').length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={5} className="h-64 text-center">
-                            <div className="flex flex-col items-center justify-center text-rose-200 gap-4">
-                              <Sparkles className="w-12 h-12 opacity-20" />
-                              <p className="text-sm font-bold italic">Tu colección está esperando nuevas joyas...</p>
+                      ) : (
+                        <TableRow
+                          className="border-t border-rose-50 group cursor-pointer hover:bg-rose-50/30 transition-all h-20"
+                          onClick={() => setIsUploadDialogOpen(true)}
+                        >
+                          <TableCell className="px-10" colSpan={5}>
+                            <div className="flex items-center gap-5 text-rose-400 group-hover:text-rose-500 transition-colors">
+                              <div className="w-10 h-10 border-2 border-dashed border-rose-200 rounded-full flex items-center justify-center group-hover:border-rose-400 transition-colors bg-white/50">
+                                <Plus className="w-5 h-5" />
+                              </div>
+                              <span className="text-sm font-black italic tracking-tight">Haz clic aquí para subir otro archivo...</span>
                             </div>
                           </TableCell>
                         </TableRow>
