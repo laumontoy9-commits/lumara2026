@@ -32,7 +32,8 @@ import {
   Gem,
   BookOpen,
   FileImage,
-  Camera
+  Camera,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
@@ -72,7 +73,7 @@ import {
 } from '@/components/ui/dialog';
 import { mockData } from './mockData';
 import { FileEntry, FolderEntry, RootEntry, DocumentStatus } from './types';
-import { saveFileToDB, saveImageToDB, saveVaultState, loadVaultState } from './storage';
+import { saveFileToDB, saveImageToDB, deleteFileFromDB, saveVaultState, loadVaultState } from './storage';
 
 const StatusBadge = ({ status }: { status: DocumentStatus }) => {
   switch (status) {
@@ -858,6 +859,27 @@ function Dashboard() {
     setIsNewFolderDialogOpen(false);
   };
 
+  const handleDeleteFile = (fileId: string) => {
+    const removeFile = (items: RootEntry[]): RootEntry[] =>
+      items
+        .filter(item => item.id !== fileId)
+        .map(item =>
+          item.type === 'folder'
+            ? { ...item, children: removeFile(item.children) }
+            : item
+        );
+    const updatedData = removeFile(allData);
+    setAllData(updatedData);
+    if (currentPath.length > 0) {
+      setCurrentPath(prev =>
+        prev.map(folder => ({ ...folder, children: removeFile(folder.children) }))
+      );
+    }
+    if (selectedFile?.id === fileId) setSelectedFile(null);
+    deleteFileFromDB(fileId);
+    saveVaultState(updatedData, profilePhotos);
+  };
+
   const handleGlobalPaste = async (e: any) => {
     // Handle paste for profile images/charts if one is being hovered
     if (hoveredMemberId) {
@@ -1464,22 +1486,37 @@ function Dashboard() {
                             {(item as FileEntry).size}
                           </TableCell>
                           <TableCell className="text-right px-10">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="w-10 h-10 rounded-full bg-slate-100 hover:bg-rose-500 hover:text-white transition-all shadow-sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const link = document.createElement('a');
-                                link.href = (item as FileEntry).url || '#';
-                                link.download = (item as FileEntry).name;
-                                document.body.appendChild(link);
-                                link.click();
-                                document.body.removeChild(link);
-                              }}
-                            >
-                              <Download className="w-4 h-4" />
-                            </Button>
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-10 h-10 rounded-full bg-slate-100 hover:bg-rose-500 hover:text-white transition-all shadow-sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const link = document.createElement('a');
+                                  link.href = (item as FileEntry).url || '#';
+                                  link.download = (item as FileEntry).name;
+                                  document.body.appendChild(link);
+                                  link.click();
+                                  document.body.removeChild(link);
+                                }}
+                              >
+                                <Download className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="w-10 h-10 rounded-full bg-slate-100 hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`¿Eliminar "${(item as FileEntry).name}"?`)) {
+                                    handleDeleteFile(item.id);
+                                  }
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
