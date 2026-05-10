@@ -1300,11 +1300,11 @@ function Dashboard() {
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
                   <Card className="col-span-1 lg:col-span-2 border-0 bg-white/60 backdrop-blur-lg rounded-[2.5rem] shadow-xl shadow-rose-200/20 overflow-hidden min-h-[450px] group">
                     <div className="h-full relative overflow-hidden">
-                      <img 
-                        src="https://picsum.photos/seed/lumara-product-set/800/1000" 
-                        alt="Lumara Product" 
-                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
-                        referrerPolicy="no-referrer" 
+                      <img
+                        src="https://drive.google.com/uc?export=view&id=1zrgYDNU-IA9_YPEaMN4rI_qXgx6ufHOw"
+                        alt="Lumara Duo Lips"
+                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                        referrerPolicy="no-referrer"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-rose-900/40 via-transparent to-transparent" />
                       <div className="absolute bottom-8 left-8 right-8">
