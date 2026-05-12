@@ -687,6 +687,20 @@ function Dashboard() {
   const currentFolder = currentPath.length > 0 ? currentPath[currentPath.length - 1] : null;
   const displayItems = currentFolder ? currentFolder.children : allData;
 
+  const openFile = (file: FileEntry) => {
+    const ext = file.extension.toLowerCase();
+    if (['xlsx', 'xls', 'csv'].includes(ext) && file.url) {
+      const link = document.createElement('a');
+      link.href = file.url;
+      link.download = file.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      setSelectedFile(file);
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -714,7 +728,7 @@ function Dashboard() {
         };
       }));
 
-      if (newFiles.length > 0) setSelectedFile(newFiles[0]);
+      if (newFiles.length > 0) openFile(newFiles[0]);
 
       let updatedData: RootEntry[];
       if (currentFolder) {
@@ -790,7 +804,7 @@ function Dashboard() {
         };
       }));
 
-      if (newFiles.length > 0) setSelectedFile(newFiles[0]);
+      if (newFiles.length > 0) openFile(newFiles[0]);
 
       let updatedData: RootEntry[];
       if (currentFolder) {
@@ -941,7 +955,7 @@ function Dashboard() {
           };
         }));
 
-        if (newFiles.length > 0) setSelectedFile(newFiles[0]);
+        if (newFiles.length > 0) openFile(newFiles[0]);
 
         let updatedData: RootEntry[];
         if (currentFolder) {
@@ -1464,19 +1478,7 @@ function Dashboard() {
                           key={item.id}
                           className="border-b border-rose-50 last:border-0 group cursor-pointer hover:bg-rose-50/20 transition-all h-20"
                           onClick={() => {
-                            if (item.type === 'file') {
-                              const ext = (item as FileEntry).extension.toLowerCase();
-                              if (['xlsx', 'xls', 'csv'].includes(ext) && (item as FileEntry).url) {
-                                const link = document.createElement('a');
-                                link.href = (item as FileEntry).url!;
-                                link.download = item.name;
-                                document.body.appendChild(link);
-                                link.click();
-                                document.body.removeChild(link);
-                              } else {
-                                setSelectedFile(item as FileEntry);
-                              }
-                            }
+                            if (item.type === 'file') openFile(item as FileEntry);
                           }}
                         >
                           <TableCell className="px-10">
@@ -1622,12 +1624,30 @@ function Dashboard() {
                         />
                       </div>
                     </ScrollArea>
-                  ) : ['xlsx', 'xls'].includes(selectedFile.extension.toLowerCase()) ? (
-                    <iframe
-                      src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(selectedFile.url || '')}`}
-                      className="w-full h-full border-0"
-                      title={selectedFile.name}
-                    />
+                  ) : ['xlsx', 'xls', 'csv'].includes(selectedFile.extension.toLowerCase()) ? (
+                    <div className="flex flex-col items-center justify-center h-full gap-6 bg-emerald-50/30">
+                      <div className="w-20 h-20 bg-emerald-100 rounded-3xl flex items-center justify-center shadow-inner">
+                        <FileSpreadsheet className="w-10 h-10 text-emerald-600" />
+                      </div>
+                      <div className="text-center space-y-2">
+                        <p className="font-bold text-emerald-700 text-lg">{selectedFile.name}</p>
+                        <p className="text-sm text-emerald-500">Los archivos Excel se abren en tu computador con formato completo</p>
+                      </div>
+                      <Button
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-8 gap-2 shadow-lg"
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = selectedFile.url || '#';
+                          link.download = selectedFile.name;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }}
+                      >
+                        <Download className="w-4 h-4" />
+                        Descargar Excel
+                      </Button>
+                    </div>
                   ) : (
                     <iframe 
                       src={selectedFile.url} 
