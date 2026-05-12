@@ -1460,12 +1460,22 @@ function Dashboard() {
                     </TableHeader>
                     <TableBody>
                       {filteredItems.filter(i => i.type === 'file').map((item, index) => (
-                        <TableRow 
-                          key={item.id} 
+                        <TableRow
+                          key={item.id}
                           className="border-b border-rose-50 last:border-0 group cursor-pointer hover:bg-rose-50/20 transition-all h-20"
                           onClick={() => {
                             if (item.type === 'file') {
-                              setSelectedFile(item as FileEntry);
+                              const ext = (item as FileEntry).extension.toLowerCase();
+                              if (['xlsx', 'xls', 'csv'].includes(ext) && (item as FileEntry).url) {
+                                const link = document.createElement('a');
+                                link.href = (item as FileEntry).url!;
+                                link.download = item.name;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                              } else {
+                                setSelectedFile(item as FileEntry);
+                              }
                             }
                           }}
                         >
@@ -1612,8 +1622,12 @@ function Dashboard() {
                         />
                       </div>
                     </ScrollArea>
-                  ) : ['xlsx', 'xls', 'csv'].includes(selectedFile.extension.toLowerCase()) ? (
-                    <SpreadsheetPreview filename={selectedFile.name} url={selectedFile.url} />
+                  ) : ['xlsx', 'xls'].includes(selectedFile.extension.toLowerCase()) ? (
+                    <iframe
+                      src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(selectedFile.url || '')}`}
+                      className="w-full h-full border-0"
+                      title={selectedFile.name}
+                    />
                   ) : (
                     <iframe 
                       src={selectedFile.url} 
